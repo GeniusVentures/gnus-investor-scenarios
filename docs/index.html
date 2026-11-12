@@ -337,6 +337,11 @@ import {POS_MONTHLY_BILLING,POS_MONTHLY_GNUS,POS_MONTHLY_CASH,formatUsd,formatCo
     const y=v=>h-M.b-(v/rangeMax)*(h-M.t-M.b);
     const tickPoints=[0, .25, .5, .75,1];
     let html=`<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(extra.title)}. Four illustrative scenario curves through month ${extra.months}.">`;
+    if(extra.lockout>0){
+      const end=Math.min(extra.lockout,extra.months);
+      const shadeWidth=x(end)-M.l;
+      html+=`<rect x="${M.l}" y="${M.t}" width="${shadeWidth}" height="${h-M.t-M.b}" fill="#9db2cd" opacity="0.10"/><text x="${M.l+shadeWidth/2}" y="${M.t+13}" text-anchor="middle" font-size="11" fill="#a5c0dc">Locked ${end} mo</text>`;
+    }
     for(const t of tickPoints){const yy=y(t*rangeMax);html+=`<line x1="${M.l}" x2="${w-M.r}" y1="${yy}" y2="${yy}" stroke="#273b53" stroke-width="1"/><text x="${M.l-12}" y="${yy+4}" fill="#93a9c0" text-anchor="end" font-size="12">${escapeHtml(extra.axisFormat?extra.axisFormat(t*rangeMax):labelFormat(t*rangeMax))}</text>`;}
     for(const m of [...new Set([0,Math.round(extra.months/4),Math.round(extra.months/2),Math.round(extra.months*.75),extra.months])]){const xx=x(m);html+=`<line x1="${xx}" x2="${xx}" y1="${M.t}" y2="${h-M.b}" stroke="#20344b" stroke-dasharray="3 6"/><text x="${xx}" y="${h-16}" fill="#9eafc3" font-size="12" text-anchor="middle">${m}</text>`;}
     html+=`<text x="${(M.l+w-M.r)/2}" y="${h-1}" fill="#829cb7" text-anchor="middle" font-size="11">Months</text>`;
@@ -396,8 +401,8 @@ import {POS_MONTHLY_BILLING,POS_MONTHLY_GNUS,POS_MONTHLY_CASH,formatUsd,formatCo
     ].join('');
     drawChart('chart-price',sims,r=>r.price,priceFmt,{months:a.months,title:'Modeled GNUS prices',axisFormat:axisMoney});
     drawChart('chart-needed',sims,r=>r.needed,v=>compact(v),{months:a.months,title:'Monthly GNUS required to fund investor income'});
-    drawChart('chart-balance',sims,r=>r.investorLeft,v=>compact(v),{months:a.months,title:'Investor tokens remaining'});
-    drawChart('chart-paid',sims,r=>r.cashReceived,v=>cash(v),{months:a.months,title:'Investor cash actually received'});
+    drawChart('chart-balance',sims,r=>r.investorLeft,v=>compact(v),{months:a.months,title:'Investor tokens remaining',lockout:a.lockout});
+    drawChart('chart-paid',sims,r=>r.cashReceived,v=>cash(v),{months:a.months,title:'Investor cash actually received',lockout:a.lockout});
     drawChart('chart-inflows',sims,r=>r.companyTotalMo,v=>cash(v),{months:a.months,title:'Genius Ventures monthly POS cash and token commission value',axisFormat:axisMoney});
     drawChart('chart-wallet',sims,r=>r.companyWalletValue,v=>cash(v),{months:a.months,title:'Unrealized Genius Ventures GNUS wallet holdings',axisFormat:axisMoney});
     drawChart('chart-cash',sims,r=>r.cumCash,v=>cash(v),{months:a.months,title:'Cumulative Genius Ventures POS cash profit',axisFormat:axisMoney});
