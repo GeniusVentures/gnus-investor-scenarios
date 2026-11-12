@@ -191,23 +191,20 @@
   </aside>
   <footer class="footer"><span>Genius Ventures Investor Scenario Lab | Standalone HTML + JavaScript | No external libraries</span><span>Illustrative analysis only. Not an offer, guarantee, or investment advice.</span></footer>
 </div>
-<script>
+<script type="module">
+import {POS_MONTHLY_BILLING,POS_MONTHLY_GNUS,POS_MONTHLY_CASH,formatUsd,formatCount,calculateEquity,simulateScenario} from './model.js';
 'use strict';
 (() => {
   const COLORS=['#39d6bc','#65adff','#ffbf69','#c49bff'];
   const state={ ai:[0,5000000,20000000,50000000], shown:[true,true,true,true], focus:2 };
-  const ids=['investment','premoney','prefprice','conversion','futureeq','income','warrants','strike','devices','devicegrowth','aigrowth','capgrowth','price','supply','burn','commission','months'];
+  const ids=['investment','premoney','prefprice','conversion','futureeq','income','warrants','strike','lockout','devices','devicegrowth','aigrowth','capgrowth','price','supply','burn','commission','months'];
   const $=id=>document.getElementById(id);
   const num=id=>Number($(id).value)||0;
-  const usd=(v,max=0)=>Number.isFinite(v)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',minimumFractionDigits:0,maximumFractionDigits:max}).format(v):'Model limit';
   const numfmt=(v,d=0)=>Number.isFinite(v)?new Intl.NumberFormat('en-US',{maximumFractionDigits:d}).format(v):'Model limit';
-  const compact=v=>{if(!Number.isFinite(v))return 'Model limit';const a=Math.abs(v);if(a>=1e15)return v.toExponential(2);if(a>=1e12)return (v/1e12).toFixed(2)+'T';if(a>=1e9)return (v/1e9).toFixed(2)+'B';if(a>=1e6)return (v/1e6).toFixed(2)+'M';if(a>=1e3)return (v/1e3).toFixed(1)+'K';if(a<1&&a!==0)return v.toFixed(3);return numfmt(v,0)};
-  const cash=v=>Number.isFinite(v)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:2}).format(v):'Model limit';
-  const priceFmt=cash;
-  const axisMoney=v=>!Number.isFinite(v)?'Model limit':Math.abs(v)<1e12?cash(v):'$'+compact(v);
+  const usd=formatUsd,cash=formatUsd,priceFmt=formatUsd,axisMoney=formatUsd,compact=formatCount;
   const pct=v=>Number.isFinite(v)?v.toFixed(v<1?3:2)+'%':'-';
   const escapeHtml=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const numericIds=ids.filter(id=>id!=='months');
+  const numericIds=ids.filter(id=>id!=='months'&&id!=='lockout');
   const initial=new URLSearchParams(location.search);
   for(const id of ids){if(initial.has(id)){const value=Number(initial.get(id));if(Number.isFinite(value))$(id).value=value;}}
   for(let k=0;k<4;k++){if(initial.has('ai'+k)){const n=Number(initial.get('ai'+k));if(Number.isFinite(n))state.ai[k]=n;}}
@@ -279,7 +276,7 @@
       const label=document.querySelector('label.toggle:has(#shown'+i+')');
       if(label&&!$('show-info'+i)){const b=makeInfo('shown','show scenario',true);b.id='show-info'+i;label.after(b);}
     }
-    const chartNames=['price','needed','balance','inflows','wallet','cash'];
+    const chartNames=['price','needed','balance','paid','inflows','wallet','cash'];
     for(const name of chartNames){const container=$('chart-'+name).closest('.chart-card');const heading=container.querySelector('h3');if(heading.parentElement.classList.contains('chart-title-row'))continue;
       const row=document.createElement('div');row.className='chart-title-row';heading.before(row);row.append(heading,makeInfo('chart-'+name,heading.textContent));
     }
@@ -321,49 +318,12 @@
   function assumptions(){
     return {
       investment:Math.max(0,num('investment')),premoney:Math.max(1,num('premoney')),prefPrice:Math.max(.01,num('prefprice')),conversion:Math.max(1,num('conversion')),
-      futureEq:Math.max(0,num('futureeq')),income:Math.max(0,num('income')),warrants:Math.max(0,num('warrants')),strike:Math.max(0,num('strike')),
+      futureEq:Math.max(0,num('futureeq')),income:Math.max(0,num('income')),warrants:Math.max(0,num('warrants')),strike:Math.max(0,num('strike')),lockout:[0,6,12,18].includes(num('lockout'))?num('lockout'):0,
       devices:Math.max(0,num('devices')),deviceGrowth:Math.max(-.99,num('devicegrowth')/100),aiGrowth:Math.max(-.99,num('aigrowth')/100),
       capGrowth:Math.max(-.99,num('capgrowth')/100),startPrice:Math.max(.000001,num('price')),startSupply:Math.max(1,num('supply')),
       burn:Math.max(0,Math.min(1,num('burn')/100)),commission:Math.max(0,Math.min(1,num('commission')/100)),
       months:Math.max(1,Math.min(120,Math.round(num('months'))))
     };
-  }
-  function simulate(a,extra){
-    const baseCap=a.startPrice*a.startSupply;
-    const capMultiplier=Math.pow(1+a.capGrowth,1/12);
-    const shares=a.investment/a.prefPrice;
-    const initialTokens=shares*a.warrants;
-    let cap=baseCap,supply=a.startSupply,companyTokens=0,investorTokens=initialTokens,cumCash=0,cumIncome=0,firstShort=null,limited=null;
-    const rows=[{m:0,price:a.startPrice,needed:a.income/a.startPrice,investorLeft:initialTokens,companyCashMo:0,companyCommissionMo:0,companyWalletTokens:0,companyWalletValue:0,cumCash:0,companyTotalMo:0,supply,cumIncome:0,devices:a.devices,spend:0,burnTokens:0}];
-    for(let m=1;m<=a.months;m++){
-      const monthDevices=a.devices*Math.pow(1+a.deviceGrowth,m-1);
-      const posSpend=monthDevices*5;
-      const extraSpend=extra*Math.pow(1+a.aiGrowth,m-1);
-      const spend=posSpend+extraSpend;
-      const startPrice=cap/supply;
-      const tokensPaid=spend/startPrice;
-      const burnTokens=tokensPaid*a.burn;
-      const commissionTokens=tokensPaid*a.commission;
-      if(!Number.isFinite(burnTokens)||burnTokens>=supply*0.999999){limited=m;break;}
-      // Reserve company commission and burn from the same gross processing amount.
-      const nextSupply=supply-burnTokens;
-      if(!(nextSupply>0)){limited=m;break;}
-      companyTokens+=commissionTokens;
-      supply=nextSupply;
-      cap*=capMultiplier;
-      const price=cap/supply;
-      const needed=a.income/price;
-      const sold=Math.min(needed,investorTokens);
-      investorTokens=Math.max(0,investorTokens-sold);
-      const actualCash=sold*price;
-      cumIncome+=actualCash;
-      if(firstShort===null && sold+1e-9<needed)firstShort=m;
-      const posCash=monthDevices*15;
-      cumCash+=posCash;
-      const companyCommissionMo=spend*a.commission;
-      rows.push({m,price,needed,investorLeft:investorTokens,companyCashMo:posCash,companyCommissionMo,companyWalletTokens:companyTokens,companyWalletValue:companyTokens*price,cumCash,companyTotalMo:posCash+companyCommissionMo,supply,cumIncome,devices:monthDevices,spend,burnTokens});
-    }
-    return {rows,limited,firstShort,initialTokens};
   }
   const toClass=number=>String(number).replace(/[^0-9]/g,'');
   const plotW=750,plotH=320,M={l:70,r:17,t:16,b:45};
@@ -409,17 +369,16 @@
     const a=assumptions();$('months-output').textContent=a.months+' mo';$('months-label').textContent=a.months+' months / '+(a.months/12).toFixed(2)+' years';
     for(const b of document.querySelectorAll('#investment-presets .chip'))b.classList.toggle('active',Number(b.dataset.value)===a.investment);
     for(const b of document.querySelectorAll('#period-presets .chip'))b.classList.toggle('active',Number(b.dataset.value)===a.months);
-    const existing=a.premoney/a.prefPrice,newShares=a.investment/a.prefPrice,total=existing+newShares,owned=newShares/total,common=newShares*a.conversion;
-    const sims=state.ai.map(extra=>simulate(a,Math.max(0,extra)));
-    const chosen=sims[state.focus],end=chosen.rows[chosen.rows.length-1],full=end.m===a.months;
-    const warrantTokens=newShares*a.warrants;
+    const {existing,newShares,total,owned,common,warrantTokens}=calculateEquity(a);
+    const sims=state.ai.map(extra=>simulateScenario(a,Math.max(0,extra)));
+    const chosen=sims[state.focus],end=chosen.rows[a.months],full=Number.isFinite(end.price);
     $('kpi-ownership').textContent=pct(owned*100);$('kpi-equity').textContent=cash(owned*a.futureEq);
     $('kpi-equity-sub').textContent=`At ${cash(a.futureEq)} assumed future equity value`;
     $('kpi-warrants').textContent=compact(warrantTokens);$('kpi-price').textContent=full?priceFmt(end.price):'Model limit';
     $('kpi-price-sub').textContent=scenarioNames()[state.focus]+', month '+a.months;
     $('focus').options.length=0;scenarioNames().forEach((name,i)=>$('focus').add(new Option(name,String(i))));$('focus').value=String(state.focus);
-    const modelError = sims.some(x=>x.limited!==null);
-    $('focus-description').textContent=`Month ${a.months} | ${scenarioNames()[state.focus]} | ${modelError?'One or more scenarios reached the model limit.':'Steady assumptions unless growth inputs are changed.'}`;
+    const modelError=sims.some(x=>x.limited!==null);
+    $('focus-description').textContent=`Month ${a.months} | ${scenarioNames()[state.focus]} | ${chosen.limited!==null?'Token model stops in month '+chosen.limited+': '+chosen.limitedReason:modelError?'One or more other scenarios reached the token model limit.':'Steady assumptions unless growth inputs change.'}`;
     $('focus-summary').innerHTML=[
       card('New preferred / common shares',numfmt(newShares,2)+' / '+compact(common),'1 preferred converts to '+numfmt(a.conversion)+' common'),
       card('Warrant exercise cost',cash(warrantTokens*a.strike),'Additional to the share investment'),
@@ -430,15 +389,19 @@
       card('GV GNUS commission value / month',cash(end.companyCommissionMo),'Month '+end.m+', tokens rather than cash'),
       card('GV cumulative wallet GNUS',compact(end.companyWalletTokens),'If commission tokens are held'),
       card('GV wallet market value',cash(end.companyWalletValue),'Unrealized; at modeled end price'),
-      card('Investor token runway',chosen.firstShort?'Short in month '+chosen.firstShort:full?'Funded through month '+a.months:'Model limit','Assumes immediate token exercise and access')
+      card('Warrant token resale lockout',a.lockout+' months',a.lockout?'First permitted sale in month '+(a.lockout+1):'Available for sale from month 1'),
+      card('Investor cash actually received',cash(end.cashReceived),a.months<=a.lockout?'Locked through month '+a.lockout:'Current month, before fees and taxes'),
+      card('Investor cumulative cash receipts',cash(end.cumIncome),'No catch-up from locked months'),
+      card('Investor token runway',a.months<=a.lockout?'Locked through month '+a.lockout:chosen.firstShort?'Short in month '+chosen.firstShort:full?'Funded through month '+a.months:'Model limit at month '+chosen.limited,'Resales begin month '+(a.lockout+1))
     ].join('');
     drawChart('chart-price',sims,r=>r.price,priceFmt,{months:a.months,title:'Modeled GNUS prices',axisFormat:axisMoney});
     drawChart('chart-needed',sims,r=>r.needed,v=>compact(v),{months:a.months,title:'Monthly GNUS required to fund investor income'});
     drawChart('chart-balance',sims,r=>r.investorLeft,v=>compact(v),{months:a.months,title:'Investor tokens remaining'});
+    drawChart('chart-paid',sims,r=>r.cashReceived,v=>cash(v),{months:a.months,title:'Investor cash actually received'});
     drawChart('chart-inflows',sims,r=>r.companyTotalMo,v=>cash(v),{months:a.months,title:'Genius Ventures monthly POS cash and token commission value',axisFormat:axisMoney});
     drawChart('chart-wallet',sims,r=>r.companyWalletValue,v=>cash(v),{months:a.months,title:'Unrealized Genius Ventures GNUS wallet holdings',axisFormat:axisMoney});
     drawChart('chart-cash',sims,r=>r.cumCash,v=>cash(v),{months:a.months,title:'Cumulative Genius Ventures POS cash profit',axisFormat:axisMoney});
-    $('scenario-table').innerHTML=sims.map((s,i)=>{const r=s.rows[s.rows.length-1],valid=r.m===a.months;let runway=s.firstShort?'Month '+s.firstShort:valid?'Through '+a.months:'Model limit';return `<tr class="${state.focus===i?'active':''}"><td><div class="table-key"><span class="dot" style="background:${COLORS[i]}"></span>${escapeHtml(scenarioNames()[i])}</div></td><td>${valid?priceFmt(r.price):'Model limit'}</td><td>${valid?numfmt(r.needed,2):'-'}</td><td>${escapeHtml(runway)}</td><td>${valid?cash(r.companyCashMo):'-'}</td><td>${valid?cash(r.companyCommissionMo):'-'}</td><td>${valid?cash(r.companyWalletValue):'-'}</td><td>${valid?compact(r.supply):'-'}</td></tr>`;}).join('');
+    $('scenario-table').innerHTML=sims.map((s,i)=>{const r=s.rows[a.months],valid=Number.isFinite(r.price);let runway=a.months<=a.lockout?'Locked through month '+a.lockout:s.firstShort?'Short in month '+s.firstShort:valid?'Through '+a.months:'Model limit (month '+s.limited+')';return `<tr class="${state.focus===i?'active':''}"><td><div class="table-key"><span class="dot" style="background:${COLORS[i]}"></span>${escapeHtml(scenarioNames()[i])}</div></td><td>${valid?priceFmt(r.price):'Model limit'}</td><td>${valid?numfmt(r.needed,2):'-'}</td><td>${valid?cash(r.cashReceived):'Model limit'}</td><td>${escapeHtml(runway)}</td><td>${cash(r.companyCashMo)}</td><td>${valid?cash(r.companyCommissionMo):'-'}</td><td>${valid?cash(r.companyWalletValue):'-'}</td><td>${valid?compact(r.supply):'-'}</td></tr>`;}).join('');
     const investments=[25000,50000,100000,250000,500000,1000000,2500000,5000000,10000000];if(!investments.includes(a.investment))investments.push(a.investment);investments.sort((x,y)=>x-y);
     $('equity-table').innerHTML=investments.map(x=>{const shr=x/a.prefPrice,o=shr/(existing+shr);return `<tr class="${a.investment===x?'active':''}"><td>${usd(x)}</td><td>${numfmt(shr,2)}</td><td>${numfmt(shr*a.conversion,0)}</td><td>${pct(o*100)}</td><td>${usd(o*a.futureEq)}</td></tr>`;}).join('');
     $('cap-note').textContent=`Pre-money preferred shares: ${numfmt(existing,0)}. With the selected investment: ${numfmt(total,0)} preferred shares post-money, ${numfmt(newShares,2)} new preferred shares and ${numfmt(common,0)} common shares on conversion. Future equity value is not a dividend or cash payout.`;
@@ -447,9 +410,10 @@
     window.__dashboard={a,sims,scenarioNames:scenarioNames(),sharePct:owned};
   }
   function scenarioParams(a){const p=new URLSearchParams();ids.forEach(id=>p.set(id,$(id).value));state.ai.forEach((v,i)=>p.set('ai'+i,String(v)));p.set('shown',state.shown.map(x=>x?'1':'0').join(''));p.set('focus',String(state.focus));return p.toString();}
-  function exportCsv(){const d=window.__dashboard;if(!d)return;const rows=[['Scenario','Month','Extra AI monthly base USD','GNUS price USD','Supply tokens','AI spending USD','Tokens burned','Investor required GNUS monthly','Investor GNUS remaining','GV POS cash profit monthly USD','GV GNUS commission monthly USD','GV wallet token holdings','GV wallet value USD','Cumulative POS cash USD']];d.sims.forEach((s,i)=>s.rows.forEach(r=>rows.push([d.scenarioNames[i],r.m,state.ai[i],r.price,r.supply,r.spend,r.burnTokens,r.needed,r.investorLeft,r.companyCashMo,r.companyCommissionMo,r.companyWalletTokens,r.companyWalletValue,r.cumCash])));const csv=rows.map(row=>row.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(',')).join('\r\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='gnus-investor-scenarios.csv';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);}
+  function exportCsv(){const d=window.__dashboard;if(!d)return;const rows=[['Scenario','Month','Extra AI monthly base USD','Warrant resale lockout months','GNUS price USD','Supply tokens','AI spending USD','Tokens burned','Investor required GNUS monthly','Investor GNUS remaining','Investor locked GNUS','Investor GNUS sold this month','Investor cash received USD','Investor cash shortfall USD','Cumulative investor cash USD','GV POS cash profit monthly USD','GV GNUS commission monthly USD','GV wallet token holdings','GV wallet value USD','Cumulative POS cash USD']];d.sims.forEach((s,i)=>s.rows.forEach(r=>rows.push([d.scenarioNames[i],r.m,state.ai[i],d.a.lockout,r.price,r.supply,r.spend,r.burnTokens,r.needed,r.investorLeft,r.lockedTokens,r.investorSold,r.cashReceived,r.incomeShortfall,r.cumIncome,r.companyCashMo,r.companyCommissionMo,r.companyWalletTokens,r.companyWalletValue,r.cumCash])));const csv=rows.map(row=>row.map(v=>'"'+String(typeof v==='number'&&!Number.isFinite(v)?'':v).replaceAll('"','""')+'"').join(',')).join('\r\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='gnus-investor-scenarios.csv';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);}
   for(const id of numericIds)$(id).addEventListener('input',update);
   $('months').addEventListener('input',update);
+  $('lockout').addEventListener('change',update);
   $('focus').addEventListener('change',()=>{state.focus=Number($('focus').value);update();});
   document.querySelectorAll('#period-presets button').forEach(b=>b.addEventListener('click',()=>{$('months').value=b.dataset.value;update();}));
   document.querySelectorAll('#investment-presets button').forEach(b=>b.addEventListener('click',()=>{$('investment').value=b.dataset.value;update();}));
