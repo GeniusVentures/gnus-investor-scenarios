@@ -60,7 +60,7 @@
 <div class="shell">
   <header class="top">
     <div class="brand"><span class="mark">G</span><div><strong>Genius Ventures</strong><div class="eyebrow">GNUS investor scenario lab</div></div></div>
-    <div class="toplinks"><span class="tag">Illustrative, not a forecast</span><a href="https://docs.gnus.ai/llms.txt" target="_blank" rel="noopener noreferrer">GNUS documentation</a><button class="action" id="assumptions-open" type="button">Assumptions &amp; formulas</button><button class="action" id="share">Copy scenario URL</button><button class="action primary" id="export">Export CSV</button></div>
+    <div class="toplinks"><span class="tag">Illustrative, not a forecast</span><a href="https://docs.gnus.ai/" target="_blank" rel="noopener noreferrer">GNUS documentation</a><button class="action" id="assumptions-open" type="button">Assumptions &amp; formulas</button><button class="action" id="share">Copy scenario URL</button><button class="action primary" id="export">Export CSV</button></div>
   </header>
   <div class="eyebrow">Equity + token warrants + software revenue + AI processing</div>
   <h1>One model. All the economics.</h1>
@@ -198,8 +198,263 @@
   const num=id=>Number($(id).value)||0;
   const usd=(v,max=0)=>Number.isFinite(v)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',minimumFractionDigits:0,maximumFractionDigits:max}).format(v):'Model limit';
   const numfmt=(v,d=0)=>Number.isFinite(v)?new Intl.NumberFormat('en-US',{maximumFractionDigits:d}).format(v):'Model limit';
-  const compact=v=>{if(!Number.isFinite(v))return 'Model limit';let a=Math.abs(v);if(a>=1e12)return (v/1e12).toFixed(2)+'T';if(a>=1e9)return (v/1e9).toFixed(2)+'B';if(a>=1e6)return (v/1e6).toFixed(2)+'M';if(a>=1e3)return (v/1e3).toFixed(1)+'K';if(a<1&&a!==0)return v.toFixed(3);return numfmt(v,0)};
-  const cash=v=>'$'+compact(v);
+  const compact=v=>{if(!Number.isFinite(v))return 'Model limit';const a=Math.abs(v);if(a>=1e15)return v.toExponential(2);if(a>=1e12)return (v/1e12).toFixed(2)+'T';if(a>=1e9)return (v/1e9).toFixed(2)+'B';if(a>=1e6)return (v/1e6).toFixed(2)+'M';if(a>=1e3)return (v/1e3).toFixed(1)+'K';if(a<1&&a!==0)return v.toFixed(3);return numfmt(v,0)};
+  const cash=v=>Number.isFinite(v)?'
+  const priceFmt=v=>!Number.isFinite(v)?'Model limit':v<1?'$'+v.toFixed(4):v<100?'$'+v.toFixed(2):cash(v);
+  const pct=v=>Number.isFinite(v)?v.toFixed(v<1?3:2)+'%':'-';
+  const escapeHtml=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const numericIds=ids.filter(id=>id!=='months');
+  const initial=new URLSearchParams(location.search);
+  for(const id of ids){if(initial.has(id)){const value=Number(initial.get(id));if(Number.isFinite(value))$(id).value=value;}}
+  for(let k=0;k<4;k++){if(initial.has('ai'+k)){const n=Number(initial.get('ai'+k));if(Number.isFinite(n))state.ai[k]=n;}}
+  if(initial.has('focus')){const x=Number(initial.get('focus'));if(Number.isInteger(x)&&x>=0&&x<=3)state.focus=x;}
+  if(initial.has('shown')){const mask=initial.get('shown');if(/^[01]{4}$/.test(mask))state.shown=[...mask].map(x=>x==='1');}
+  $('focus').value=String(state.focus);
+  function scenarioNames(){return state.ai.map((a,i)=>i===0 && a===0?'POS only':`POS + ${cash(a)} AI/mo`);}
+  function renderScenarioInputs(){
+    $('scenario-list').innerHTML=state.ai.map((value,i)=>`<div class="scenario-card"><div class="scenario-head"><span class="dot" style="background:${COLORS[i]}"></span><label for="ai${i}">Scenario ${i+1}</label><label class="toggle" style="margin-left:auto"><input type="checkbox" id="shown${i}" ${state.shown[i]?'checked':''}>Show</label></div><label class="tiny muted" for="ai${i}">Extra AI spending / month ($)</label><input id="ai${i}" type="number" min="0" step="1000000" value="${value}"></div>`).join('');
+    for(let i=0;i<4;i++){
+      $('ai'+i).addEventListener('input',()=>{state.ai[i]=Math.max(0,Number($('ai'+i).value)||0);update();});
+      $('shown'+i).addEventListener('change',()=>{state.shown[i]=$('shown'+i).checked;update();});
+    }
+  }
+  const HELP = {
+    investment:{title:'Investment amount',kind:'Deal input',html:'<p>Cash paid to buy new preferred stock at the chosen price per share.</p><p><strong>Shares purchased:</strong> investment ÷ preferred share price. The model assumes the company issues new shares, so existing owners are diluted.</p>'},
+    premoney:{title:'Company pre-money valuation',kind:'Deal assumption',html:'<p>The assumed value of Genius Ventures immediately <strong>before</strong> new investment cash enters the company.</p><p><strong>Preferred shares before investment:</strong> pre-money valuation ÷ preferred share price. This assumes the entire as-converted equity value is captured by the modeled preferred class, with no other dilution.</p>'},
+    prefprice:{title:'Preferred share price',kind:'Deal term',html:'<p>Cash subscription price for one preferred share. Default: <strong>$100</strong>.</p><p>Investment ÷ this price gives the number of preferred shares purchased. It is not the future price or the value of common stock.</p>'},
+    conversion:{title:'Common shares per preferred',kind:'Deal term',html:'<p>The number of common shares received by converting one preferred share. Default: <strong>100 common for each preferred</strong>.</p><p>Changing this alters the displayed common-share count. If all existing and new shares have the same ratio, it does not by itself change the investor’s percentage.</p>'},
+    futureeq:{title:'Future company equity value',kind:'Hypothetical scenario',html:'<p>The assumed total value of all company equity at a later time. The dashboard multiplies this by your post-investment ownership percentage to show <strong>pro-rata theoretical equity value</strong>.</p><p>This is not a dividend, a cash return, or a promised sale price. Liquidation rights and future dilution may change the result.</p>'},
+    income:{title:'Target monthly cash income',kind:'Investor goal',html:'<p>Your desired monthly dollar amount from selling GNUS, excluding taxes and trading fees.</p><p><strong>Tokens required each month</strong> = target cash income ÷ modeled GNUS price at the end of that month. The separate balance chart shows when hypothetical acquired warrant tokens run out.</p>'},
+    warrants:{title:'GNUS warrants per preferred share',kind:'Unagreed placeholder',html:'<p>The assumed number of GNUS warrants granted for each preferred share purchased. Default <strong>10 is an example only</strong> and is not a verified term of an offering.</p><p>Warrant token allocation = preferred shares purchased × warrants per preferred share. This assumes one GNUS token per exercised warrant.</p>'},
+    strike:{title:'Warrant exercise price per GNUS',kind:'Unagreed placeholder',html:'<p>Additional cash cost to exercise each GNUS warrant. Default $0 is a neutral placeholder, not a claim that warrants are free.</p><p><strong>Total exercise cost</strong> = warrant tokens × strike price. The model assumes all tokens can be exercised at month zero. Actual expiry, vesting, resale limits and funding timing must be confirmed.</p>'},
+    devices:{title:'Starting paid POS devices',kind:'Operating assumption',html:'<p>Number of devices paying for the $20 monthly software service in month 1.</p><p>Each device contributes an assumed <strong>$15 cash profit</strong> and funds <strong>$5 of GNUS processing</strong> each month. This does not claim there are currently this many customers.</p>'},
+    devicegrowth:{title:'Monthly device growth',kind:'Growth assumption',html:'<p>Monthly compound change in paid device count. For month m: <code>Starting devices × (1 + growth)^(m − 1)</code>.</p><p>Use zero for a steady device base. Positive growth expands the POS cash and GNUS processing streams. Negative growth models churn or a shrinking device base.</p>'},
+    aigrowth:{title:'Monthly general AI processing growth',kind:'Growth assumption',html:'<p>Monthly compound change in the <strong>extra</strong> AI workload shown in each scenario, excluding POS device credit.</p><p>Month m extra processing = initial scenario spend × <code>(1 + growth)^(m − 1)</code>.</p><p>This value represents actual eligible token spending, not just bookings or potential demand.</p>'},
+    capgrowth:{title:'Annual GNUS market-cap change',kind:'Price-model assumption',html:'<p>Independent growth or decline in the assumed total GNUS token market capitalization. Default <strong>0%</strong> isolates the mechanical effect of reduced supply.</p><p>The model converts this to a monthly rate using <code>(1 + annual change)^(1/12)</code>. Token price = modeled token market cap ÷ remaining token supply. Actual markets do not owe us this path.</p>'},
+    price:{title:'Starting GNUS price',kind:'Illustrative starting point',html:'<p>The assumed market price of one GNUS token at month zero. Default <strong>$3.40</strong> follows a historical example in GNUS documentation; it is <strong>not a live quote</strong>.</p><p>Together with starting supply, it sets the initial modeled token market capitalization.</p>'},
+    supply:{title:'Starting GNUS supply',kind:'Illustrative starting point',html:'<p>Initial number of GNUS tokens in the modeled supply. Default <strong>20 million</strong>, consistent with the historical example. This is not a verified live circulating-supply figure.</p><p>The model subtracts eligible processing burns each month. It omits new token issuance and other supply changes.</p>'},
+    burn:{title:'AI processing burn',kind:'Historical GNUS rule',html:'<p>Share of GNUS consumed by eligible AI payouts that is destroyed rather than transferred. Default <strong>10%</strong> is from a historical GNUS processing example.</p><p><strong>Burned tokens</strong> = AI processing USD ÷ start-of-month token price × burn rate. This is separate from the company commission.</p><p>The network’s live BurnConfig can differ; the historical docs are not proof of a current rate.</p>'},
+    commission:{title:'GNUS allocated to Genius Ventures',kind:'Historical GNUS rule',html:'<p>Share of GNUS processing payouts allocated to Genius Ventures wallets, <strong>in addition to</strong> the burn. Default <strong>10%</strong>.</p><p><strong>Monthly wallet receipt tokens</strong> = AI spend USD ÷ start-of-month GNUS price × this percentage. Dollar value is <em>not</em> realized cash unless the company sells the tokens.</p><p>At a 10% burn and 10% commission, the other 80% goes to providers or other payouts in this simple split.</p>'},
+    months:{title:'Projection length',kind:'Time horizon',html:'<p>Select how far the monthly model runs, from <strong>1 to 120 months</strong> (10 years). Preset buttons jump to common periods.</p><p>Each chart, table and the selected scenario snapshot use the same endpoint. Over long periods, small monthly growth rates compound sharply.</p>'},
+    focus:{title:'Focus scenario',kind:'Chart selection',html:'<p>Choose which of the four general AI processing scenarios supplies the headline values, detailed snapshot, and emphasized chart line.</p><p>All four curves remain on the charts unless you hide them with their Show checkboxes.</p>'},
+    ai:{title:'Extra general AI processing',kind:'Scenario input',html:'<p>Monthly <strong>eligible GNUS AI processing in USD</strong> beyond the $5 per subscribed POS device. Each of the four colored scenarios can have a different month-one spend.</p><p>AI demand growth compounds this amount monthly. Both the 10% burn and 10% GV wallet allocation apply to this extra spending in the modeled split.</p>'},
+    shown:{title:'Show scenario on charts',kind:'Display only',html:'<p>Show or hide this scenario curve. Hiding it has no effect on the calculations or comparison table.</p><p>The focus selector picks which scenario appears in the headline cards.</p>'},
+    posRule:{title:'Mandatory use-it-or-lose-it POS credit',kind:'Fixed operating rule',html:'<p>Every paid device bills $20 each month. The scenario books $15 as Genius Ventures cash profit and allocates the remaining $5 to GNUS purchases and eligible AI processing.</p><p>There is <strong>no usage percentage control</strong>: the full $5 enters the model each month. Note that if a real customer loses unused credit without processing, credit expiry alone does not necessarily trigger a token burn.</p>'},
+    share:{title:'Share this scenario',kind:'Action',html:'<p>Copy a URL that contains the input values, the four AI demand scenarios, their visibility, and the chosen focus.</p><p>When hosted on GitHub Pages, someone opening the link sees the same settings. No account or back-end is needed. Copying an <code>file://</code> URL is only useful on your computer.</p>'},
+    export:{title:'Export the monthly results',kind:'Action',html:'<p>Download a CSV with one row for each month in each of the four scenarios. Open it in Excel, Sheets, Python, or another tool.</p><p>This is a local download. No input data is sent to a server by this dashboard.</p>'},
+    'chart-price':{title:'Modeled GNUS price chart',kind:'Chart explanation',html:'<p><strong>Line:</strong> token price, calculated each month as assumed token market cap ÷ post-burn token supply.</p><p>More processing burns more tokens, but real GNUS price might move differently. This chart is a <strong>scenario calculation, not a forecast</strong>.</p>'},
+    'chart-needed':{title:'Monthly GNUS sales to reach cash target',kind:'Chart explanation',html:'<p><strong>Line:</strong> monthly investor cash target ÷ modeled GNUS price.</p><p>At higher token prices the same target takes fewer tokens. This does not mean the investor still owns enough tokens; check the balance chart beside it.</p>'},
+    'chart-balance':{title:'Remaining investor warrant tokens',kind:'Chart explanation',html:'<p><strong>Line:</strong> hypothetical warrant tokens acquired at the start, minus tokens sold each month to meet the cash target, with a floor of zero.</p><p>Actual warrants may be subject to exercise cost, vesting and sale restrictions. The model assumes immediate full exercise and no new token grants.</p>'},
+    'chart-inflows':{title:'Monthly Genius Ventures economic receipts',kind:'Chart explanation',html:'<p><strong>Line:</strong> $15/device POS cash contribution plus the USD-equivalent of the 10% GNUS commission earned in that month.</p><p><strong>This is not all cash.</strong> The company commission arrives as GNUS. Holding it gives a token asset, while selling turns it into cash and removes later price exposure.</p>'},
+    'chart-wallet':{title:'Genius Ventures token wallet value',kind:'Chart explanation',html:'<p><strong>Line:</strong> cumulative GNUS commission tokens received, marked at the modeled month-end GNUS price. The graph assumes the company retains 100% of those tokens.</p><p>This value is not realized cash and can become economically infeasible if wallets hold more than the liquid token market can support. Transaction depth and token turnover are not modeled.</p>'},
+    'chart-cash':{title:'Cumulative POS cash profit',kind:'Chart explanation',html:'<p><strong>Line:</strong> the sum over each month of paying devices × $15 cash contribution.</p><p>Does not include proceeds from selling GNUS. Also excludes any costs not already accounted for in the $15 assumption, taxes, capital spending, and changes to the subscription price.</p>'},
+    ownership:{title:'Post-money equity ownership',kind:'Result',html:'<p>New preferred shares divided by the total preferred shares immediately after this investment, on the chosen as-converted model. Does not include other securities or later dilution.</p>'},
+    equity:{title:'Pro-rata equity value',kind:'Result',html:'<p>Your modeled post-money ownership percentage multiplied by the assumed future total equity value. This is not a payment to the investor or a forecast.</p>'},
+    tokenallocation:{title:'Illustrative GNUS warrant token allocation',kind:'Result',html:'<p>Preferred shares purchased multiplied by the user-supplied GNUS warrants per preferred share. The number is hypothetical until warrant terms are finalized; exercise may require extra payment.</p>'},
+    horizonprice:{title:'GNUS price at projection end',kind:'Result',html:'<p>Price calculated for the focused scenario at the selected month, using the chosen token market-cap path and modeled reduction in supply. It is not a live quote or guaranteed sale price.</p>'},
+    scenarios:{title:'Processing scenario comparison',kind:'Results',html:'<p>Each row reports the selected final month for one AI demand setting, alongside cash contribution, GNUS company receipts, investor token requirements, and token supply. “Model limit” means the simplified supply model cannot continue.</p>'},
+    equitytable:{title:'Equity investment table',kind:'Results',html:'<p>Shows ownership if the company issues new $100 preferred shares into a $50M pre-money cap table (or your edited values).</p><p>Future equity values are theoretical pro-rata amounts; they exclude preferential liquidation rights, additional equity grants, and future raises.</p>'}
+  };
+  let activeHelpTrigger=null;
+  const helpPopover=$('help-popover');
+  function makeInfo(key,label,small=false){
+    const button=document.createElement('button');button.type='button';button.className='info-trigger'+(small?' small':'');
+    button.dataset.help=key;button.textContent='?';button.setAttribute('aria-label','Explain '+label);button.setAttribute('aria-haspopup','dialog');
+    return button;
+  }
+  function attachFieldHelp(id,key=id){
+    const label=document.querySelector('label[for="'+id+'"]');if(!label||label.closest('.label-help'))return;
+    const wrap=document.createElement('div');wrap.className='label-help';label.before(wrap);wrap.append(label,makeInfo(key,label.textContent.trim()));
+  }
+  function decorateHelp(){
+    ids.forEach(id=>attachFieldHelp(id));attachFieldHelp('focus');
+    for(let i=0;i<4;i++){
+      attachFieldHelp('ai'+i,'ai');
+      const label=document.querySelector('label.toggle:has(#shown'+i+')');
+      if(label&&!$('show-info'+i)){const b=makeInfo('shown','show scenario',true);b.id='show-info'+i;label.after(b);}
+    }
+    const chartNames=['price','needed','balance','inflows','wallet','cash'];
+    for(const name of chartNames){const container=$('chart-'+name).closest('.chart-card');const heading=container.querySelector('h3');if(heading.parentElement.classList.contains('chart-title-row'))continue;
+      const row=document.createElement('div');row.className='chart-title-row';heading.before(row);row.append(heading,makeInfo('chart-'+name,heading.textContent));
+    }
+    const kpis=[['ownership','Post-money equity ownership'],['equity','Pro-rata equity value'],['tokenallocation','Investor warrant token allocation'],['horizonprice','Modeled GNUS price']];
+    document.querySelectorAll('.kpis .card').forEach((card,i)=>{const heading=card.querySelector('.kpi-label');if(!heading.querySelector('.info-trigger'))heading.append(' ',makeInfo(kpis[i][0],kpis[i][1],true));});
+    const sectionTitles=[['#scenario-table','scenarios'],['#equity-table','equitytable']];
+    for(const [selector,key] of sectionTitles){const table=$(selector.slice(1));const title=table.closest('section').querySelector('.section-heading h2');if(!title.querySelector('.info-trigger'))title.append(' ',makeInfo(key,title.textContent,true));}
+    $('share').after(makeInfo('share','Copy scenario URL',true));
+    $('export').after(makeInfo('export','Export CSV',true));
+  }
+  function showHelp(button){
+    const data=HELP[button.dataset.help];if(!data)return;
+    if(activeHelpTrigger===button&&!helpPopover.hidden){closeHelp();return;}
+    activeHelpTrigger=button;$('help-pop-kind').textContent=data.kind;$('help-pop-title').textContent=data.title;
+    $('help-pop-content').innerHTML=data.html;helpPopover.hidden=false;
+    const rect=button.getBoundingClientRect();const width=Math.min(370,window.innerWidth-22);
+    const left=Math.max(11,Math.min(window.innerWidth-width-11,rect.left-8));
+    helpPopover.style.width=width+'px';helpPopover.style.left=left+'px';
+    helpPopover.style.top='10px';
+    const height=helpPopover.getBoundingClientRect().height;
+    const top=rect.bottom+10+height<=window.innerHeight-8?rect.bottom+10:Math.max(9,rect.top-height-10);
+    helpPopover.style.top=top+'px';
+  }
+  function closeHelp(){helpPopover.hidden=true;activeHelpTrigger=null;}
+  document.addEventListener('click',event=>{
+    const trigger=event.target.closest?.('button[data-help]');
+    if(trigger){event.preventDefault();showHelp(trigger);return;}
+    if(!helpPopover.hidden&&!helpPopover.contains(event.target))closeHelp();
+  });
+  $('help-pop-close').addEventListener('click',closeHelp);
+  document.addEventListener('keydown',event=>{if(event.key==='Escape')closeHelp();});
+  window.addEventListener('scroll',closeHelp,{passive:true});
+  window.addEventListener('resize',closeHelp,{passive:true});
+  $('assumptions-open').addEventListener('click',()=>{closeHelp();$('assumptions-dialog').showModal();});
+  $('assumptions-close').addEventListener('click',()=>$('assumptions-dialog').close());
+  $('assumptions-dialog').addEventListener('click',event=>{if(event.target===$('assumptions-dialog'))$('assumptions-dialog').close();});
+  renderScenarioInputs();
+  decorateHelp();
+  function assumptions(){
+    return {
+      investment:Math.max(0,num('investment')),premoney:Math.max(1,num('premoney')),prefPrice:Math.max(.01,num('prefprice')),conversion:Math.max(1,num('conversion')),
+      futureEq:Math.max(0,num('futureeq')),income:Math.max(0,num('income')),warrants:Math.max(0,num('warrants')),strike:Math.max(0,num('strike')),
+      devices:Math.max(0,num('devices')),deviceGrowth:Math.max(-.99,num('devicegrowth')/100),aiGrowth:Math.max(-.99,num('aigrowth')/100),
+      capGrowth:Math.max(-.99,num('capgrowth')/100),startPrice:Math.max(.000001,num('price')),startSupply:Math.max(1,num('supply')),
+      burn:Math.max(0,Math.min(1,num('burn')/100)),commission:Math.max(0,Math.min(1,num('commission')/100)),
+      months:Math.max(1,Math.min(120,Math.round(num('months'))))
+    };
+  }
+  function simulate(a,extra){
+    const baseCap=a.startPrice*a.startSupply;
+    const capMultiplier=Math.pow(1+a.capGrowth,1/12);
+    const shares=a.investment/a.prefPrice;
+    const initialTokens=shares*a.warrants;
+    let cap=baseCap,supply=a.startSupply,companyTokens=0,investorTokens=initialTokens,cumCash=0,cumIncome=0,firstShort=null,limited=null;
+    const rows=[{m:0,price:a.startPrice,needed:a.income/a.startPrice,investorLeft:initialTokens,companyCashMo:0,companyCommissionMo:0,companyWalletTokens:0,companyWalletValue:0,cumCash:0,companyTotalMo:0,supply,cumIncome:0,devices:a.devices,spend:0,burnTokens:0}];
+    for(let m=1;m<=a.months;m++){
+      const monthDevices=a.devices*Math.pow(1+a.deviceGrowth,m-1);
+      const posSpend=monthDevices*5;
+      const extraSpend=extra*Math.pow(1+a.aiGrowth,m-1);
+      const spend=posSpend+extraSpend;
+      const startPrice=cap/supply;
+      const tokensPaid=spend/startPrice;
+      const burnTokens=tokensPaid*a.burn;
+      const commissionTokens=tokensPaid*a.commission;
+      if(!Number.isFinite(burnTokens)||burnTokens>=supply*0.999999){limited=m;break;}
+      // Reserve company commission and burn from the same gross processing amount.
+      const nextSupply=supply-burnTokens;
+      if(!(nextSupply>0)){limited=m;break;}
+      companyTokens+=commissionTokens;
+      supply=nextSupply;
+      cap*=capMultiplier;
+      const price=cap/supply;
+      const needed=a.income/price;
+      const sold=Math.min(needed,investorTokens);
+      investorTokens=Math.max(0,investorTokens-sold);
+      const actualCash=sold*price;
+      cumIncome+=actualCash;
+      if(firstShort===null && sold+1e-9<needed)firstShort=m;
+      const posCash=monthDevices*15;
+      cumCash+=posCash;
+      const companyCommissionMo=spend*a.commission;
+      rows.push({m,price,needed,investorLeft:investorTokens,companyCashMo:posCash,companyCommissionMo,companyWalletTokens:companyTokens,companyWalletValue:companyTokens*price,cumCash,companyTotalMo:posCash+companyCommissionMo,supply,cumIncome,devices:monthDevices,spend,burnTokens});
+    }
+    return {rows,limited,firstShort,initialTokens};
+  }
+  const toClass=number=>String(number).replace(/[^0-9]/g,'');
+  const plotW=750,plotH=320,M={l:70,r:17,t:16,b:45};
+  function drawChart(elementId,sims,metric,labelFormat,extra){
+    const target=$(elementId);
+    const w=plotW,h=plotH;
+    const valid=sims.flatMap((s,i)=>state.shown[i]?s.rows.map(r=>metric(r)):[]).filter(v=>Number.isFinite(v)&&v>=0);
+    const max=valid.length?Math.max(...valid,0.000000001):1;
+    const rangeMax=max*1.12;
+    const x=m=>M.l+(m/extra.months)*(w-M.l-M.r);
+    const y=v=>h-M.b-(v/rangeMax)*(h-M.t-M.b);
+    const tickPoints=[0, .25, .5, .75,1];
+    let html=`<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(extra.title)}. Four illustrative scenario curves through month ${extra.months}.">`;
+    for(const t of tickPoints){const yy=y(t*rangeMax);html+=`<line x1="${M.l}" x2="${w-M.r}" y1="${yy}" y2="${yy}" stroke="#273b53" stroke-width="1"/><text x="${M.l-12}" y="${yy+4}" fill="#93a9c0" text-anchor="end" font-size="12">${escapeHtml(labelFormat(t*rangeMax))}</text>`;}
+    for(const m of [...new Set([0,Math.round(extra.months/4),Math.round(extra.months/2),Math.round(extra.months*.75),extra.months])]){const xx=x(m);html+=`<line x1="${xx}" x2="${xx}" y1="${M.t}" y2="${h-M.b}" stroke="#20344b" stroke-dasharray="3 6"/><text x="${xx}" y="${h-16}" fill="#9eafc3" font-size="12" text-anchor="middle">${m}</text>`;}
+    html+=`<text x="${(M.l+w-M.r)/2}" y="${h-1}" fill="#829cb7" text-anchor="middle" font-size="11">Months</text>`;
+    sims.forEach((s,i)=>{
+      if(!state.shown[i])return;
+      const pts=s.rows.map(r=>[x(r.m),y(metric(r))]).filter(t=>t.every(Number.isFinite));
+      if(!pts.length)return;
+      const d=pts.map((p,k)=>(k?'L':'M')+p[0].toFixed(2)+' '+p[1].toFixed(2)).join(' ');
+      html+=`<path d="${d}" fill="none" stroke="${COLORS[i]}" stroke-width="${i===state.focus?3.5:2.4}" stroke-linecap="round" stroke-linejoin="round" opacity="${i===state.focus?1:.83}"/>`;
+      if(s.limited!==null){let last=pts[pts.length-1];html+=`<circle cx="${last[0]}" cy="${last[1]}" r="5" fill="${COLORS[i]}"/>`;}
+    });
+    html+=`<line id="${elementId}-cross" x1="0" x2="0" y1="${M.t}" y2="${h-M.b}" stroke="#b2c6dd" stroke-dasharray="5 5" opacity="0"/><rect x="${M.l}" y="${M.t}" width="${w-M.l-M.r}" height="${h-M.t-M.b}" fill="transparent" class="hit"/></svg><div class="chart-tooltip" aria-live="polite"></div>`;
+    target.innerHTML=html;
+    const tooltip=target.querySelector('.chart-tooltip'),svg=target.querySelector('svg'),cross=target.querySelector('line[id$="-cross"]');
+    const hit=target.querySelector('.hit');
+    hit.addEventListener('pointermove',ev=>{
+      const rect=svg.getBoundingClientRect();const aspect=w/h;const displayedW=Math.min(rect.width,rect.height*aspect);const offset=(rect.width-displayedW)/2;
+      const px=((ev.clientX-rect.left-offset)/displayedW)*w;
+      const m=Math.max(0,Math.min(extra.months,Math.round((px-M.l)/(w-M.l-M.r)*extra.months)));
+      cross.setAttribute('x1',x(m));cross.setAttribute('x2',x(m));cross.setAttribute('opacity','1');
+      let body=`<strong>Month ${m}</strong>`;
+      sims.forEach((s,i)=>{if(!state.shown[i])return;const r=s.rows[m];body+=`<div><em style="color:${COLORS[i]}">${escapeHtml(scenarioNames()[i])}</em><b>${r?escapeHtml(labelFormat(metric(r))):'Model limit'}</b></div>`;});
+      tooltip.innerHTML=body;tooltip.style.display='block';
+      const left=Math.max(5,Math.min(rect.width-235,ev.clientX-rect.left+14));tooltip.style.left=left+'px';tooltip.style.top='10px';
+    });
+    hit.addEventListener('pointerleave',()=>{tooltip.style.display='none';cross.setAttribute('opacity','0');});
+  }
+  function card(label,value,note=''){return `<div class="stat"><div class="l">${escapeHtml(label)}</div><div class="n">${escapeHtml(value)}</div><div class="l">${escapeHtml(note)}</div></div>`;}
+  function update(){
+    const a=assumptions();$('months-output').textContent=a.months+' mo';$('months-label').textContent=a.months+' months / '+(a.months/12).toFixed(2)+' years';
+    for(const b of document.querySelectorAll('#investment-presets .chip'))b.classList.toggle('active',Number(b.dataset.value)===a.investment);
+    for(const b of document.querySelectorAll('#period-presets .chip'))b.classList.toggle('active',Number(b.dataset.value)===a.months);
+    const existing=a.premoney/a.prefPrice,newShares=a.investment/a.prefPrice,total=existing+newShares,owned=newShares/total,common=newShares*a.conversion;
+    const sims=state.ai.map(extra=>simulate(a,Math.max(0,extra)));
+    const chosen=sims[state.focus],end=chosen.rows[chosen.rows.length-1],full=end.m===a.months;
+    const warrantTokens=newShares*a.warrants;
+    $('kpi-ownership').textContent=pct(owned*100);$('kpi-equity').textContent=cash(owned*a.futureEq);
+    $('kpi-equity-sub').textContent=`At ${cash(a.futureEq)} assumed future equity value`;
+    $('kpi-warrants').textContent=compact(warrantTokens);$('kpi-price').textContent=full?priceFmt(end.price):'Model limit';
+    $('kpi-price-sub').textContent=scenarioNames()[state.focus]+', month '+a.months;
+    $('focus').options.length=0;scenarioNames().forEach((name,i)=>$('focus').add(new Option(name,String(i))));$('focus').value=String(state.focus);
+    const modelError = sims.some(x=>x.limited!==null);
+    $('focus-description').textContent=`Month ${a.months} | ${scenarioNames()[state.focus]} | ${modelError?'One or more scenarios reached the model limit.':'Steady assumptions unless growth inputs are changed.'}`;
+    $('focus-summary').innerHTML=[
+      card('New preferred / common shares',numfmt(newShares,2)+' / '+compact(common),'1 preferred converts to '+numfmt(a.conversion)+' common'),
+      card('Warrant exercise cost',cash(warrantTokens*a.strike),'Additional to the share investment'),
+      card('POS gross monthly billings',cash(end.devices*20),'Month '+end.m+', at $20/device'),
+      card('POS GNUS purchased for AI',cash(end.devices*5),'Month '+end.m+', all $5 spent'),
+      card('POS monthly cash profit',cash(end.companyCashMo),'Month '+end.m+', at $15/device'),
+      card('POS cumulative cash profit',cash(end.cumCash),'Over modeled months'),
+      card('GV GNUS commission value / month',cash(end.companyCommissionMo),'Month '+end.m+', tokens rather than cash'),
+      card('GV cumulative wallet GNUS',compact(end.companyWalletTokens),'If commission tokens are held'),
+      card('GV wallet market value',cash(end.companyWalletValue),'Unrealized; at modeled end price'),
+      card('Investor token runway',chosen.firstShort?'Short in month '+chosen.firstShort:full?'Funded through month '+a.months:'Model limit','Assumes immediate token exercise and access')
+    ].join('');
+    drawChart('chart-price',sims,r=>r.price,priceFmt,{months:a.months,title:'Modeled GNUS prices'});
+    drawChart('chart-needed',sims,r=>r.needed,v=>compact(v),{months:a.months,title:'Monthly GNUS required to fund investor income'});
+    drawChart('chart-balance',sims,r=>r.investorLeft,v=>compact(v),{months:a.months,title:'Investor tokens remaining'});
+    drawChart('chart-inflows',sims,r=>r.companyTotalMo,v=>cash(v),{months:a.months,title:'Genius Ventures monthly POS cash and token commission value'});
+    drawChart('chart-wallet',sims,r=>r.companyWalletValue,v=>cash(v),{months:a.months,title:'Unrealized Genius Ventures GNUS wallet holdings'});
+    drawChart('chart-cash',sims,r=>r.cumCash,v=>cash(v),{months:a.months,title:'Cumulative Genius Ventures POS cash profit'});
+    $('scenario-table').innerHTML=sims.map((s,i)=>{const r=s.rows[s.rows.length-1],valid=r.m===a.months;let runway=s.firstShort?'Month '+s.firstShort:valid?'Through '+a.months:'Model limit';return `<tr class="${state.focus===i?'active':''}"><td><div class="table-key"><span class="dot" style="background:${COLORS[i]}"></span>${escapeHtml(scenarioNames()[i])}</div></td><td>${valid?priceFmt(r.price):'Model limit'}</td><td>${valid?numfmt(r.needed,2):'-'}</td><td>${escapeHtml(runway)}</td><td>${valid?cash(r.companyCashMo):'-'}</td><td>${valid?cash(r.companyCommissionMo):'-'}</td><td>${valid?cash(r.companyWalletValue):'-'}</td><td>${valid?compact(r.supply):'-'}</td></tr>`;}).join('');
+    const investments=[25000,50000,100000,250000,500000,1000000,2500000,5000000,10000000];if(!investments.includes(a.investment))investments.push(a.investment);investments.sort((x,y)=>x-y);
+    $('equity-table').innerHTML=investments.map(x=>{const shr=x/a.prefPrice,o=shr/(existing+shr);return `<tr class="${a.investment===x?'active':''}"><td>${usd(x)}</td><td>${numfmt(shr,2)}</td><td>${numfmt(shr*a.conversion,0)}</td><td>${pct(o*100)}</td><td>${usd(o*a.futureEq)}</td></tr>`;}).join('');
+    $('cap-note').textContent=`Pre-money preferred shares: ${numfmt(existing,0)}. With the selected investment: ${numfmt(total,0)} preferred shares post-money, ${numfmt(newShares,2)} new preferred shares and ${numfmt(common,0)} common shares on conversion. Future equity value is not a dividend or cash payout.`;
+    if(num('burn')+num('commission')>100)$('focus-description').textContent+=' Warning: burn plus company commission exceeds 100% of processing spending.';
+    try { history.replaceState(null,'',location.pathname+'?'+scenarioParams(a)); } catch (error) { /* file: URLs and strict browsers may block history writes. */ }
+    window.__dashboard={a,sims,scenarioNames:scenarioNames(),sharePct:owned};
+  }
+  function scenarioParams(a){const p=new URLSearchParams();ids.forEach(id=>p.set(id,$(id).value));state.ai.forEach((v,i)=>p.set('ai'+i,String(v)));p.set('shown',state.shown.map(x=>x?'1':'0').join(''));p.set('focus',String(state.focus));return p.toString();}
+  function exportCsv(){const d=window.__dashboard;if(!d)return;const rows=[['Scenario','Month','Extra AI monthly base USD','GNUS price USD','Supply tokens','AI spending USD','Tokens burned','Investor required GNUS monthly','Investor GNUS remaining','GV POS cash profit monthly USD','GV GNUS commission monthly USD','GV wallet token holdings','GV wallet value USD','Cumulative POS cash USD']];d.sims.forEach((s,i)=>s.rows.forEach(r=>rows.push([d.scenarioNames[i],r.m,state.ai[i],r.price,r.supply,r.spend,r.burnTokens,r.needed,r.investorLeft,r.companyCashMo,r.companyCommissionMo,r.companyWalletTokens,r.companyWalletValue,r.cumCash])));const csv=rows.map(row=>row.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(',')).join('\r\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='gnus-investor-scenarios.csv';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);}
+  for(const id of numericIds)$(id).addEventListener('input',update);
+  $('months').addEventListener('input',update);
+  $('focus').addEventListener('change',()=>{state.focus=Number($('focus').value);update();});
+  document.querySelectorAll('#period-presets button').forEach(b=>b.addEventListener('click',()=>{$('months').value=b.dataset.value;update();}));
+  document.querySelectorAll('#investment-presets button').forEach(b=>b.addEventListener('click',()=>{$('investment').value=b.dataset.value;update();}));
+  $('share').addEventListener('click',async()=>{const url=location.href;try{await navigator.clipboard.writeText(url);$('share').textContent='Link copied';setTimeout(()=>$('share').textContent='Copy scenario URL',1800);}catch{prompt('Copy the scenario URL:',url);}});
+  $('export').addEventListener('click',exportCsv);
+  update();
+})();
+</script>
+</body>
+</html>
++compact(v):'Model limit';
   const priceFmt=v=>!Number.isFinite(v)?'Model limit':v<1?'$'+v.toFixed(4):v<100?'$'+v.toFixed(2):cash(v);
   const pct=v=>Number.isFinite(v)?v.toFixed(v<1?3:2)+'%':'-';
   const escapeHtml=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
